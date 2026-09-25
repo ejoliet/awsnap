@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>__AWSNAP_TITLE__</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 1rem;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .header {
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.5rem;
+            color: #fff;
+        }
+        .metadata-line {
+            font-size: 0.9rem;
+            color: #888;
+            margin: 0.25rem 0;
+        }
+        .status {
+            padding: 0.5rem;
+            margin: 1rem 0;
+            background: #222;
+            border-left: 3px solid #4CAF50;
+            border-radius: 2px;
+            min-height: 1.5rem;
+        }
+        .status.error {
+            border-left-color: #f44336;
+            color: #ff6b6b;
+        }
+        .editor-section {
+            margin: 1rem 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 0.5rem;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 0.9rem;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 4px;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+        button {
+            padding: 0.5rem 1rem;
+            background: #1976D2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        button:hover {
+            background: #1565C0;
+        }
+        button:active {
+            background: #0d47a1;
+        }
+        .results {
+            margin-top: 1rem;
+        }
+        .results-info {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 0.5rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #252525;
+            border: 1px solid #444;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        th {
+            background: #333;
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid #444;
+            color: #fff;
+        }
+        td {
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid #333;
+            word-break: break-word;
+            max-width: 500px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        tr:hover {
+            background: #2a2a2a;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>__AWSNAP_TITLE__</h1>
+        <div class="metadata-line">Account: <strong id="account">-</strong> | Run: <strong id="run-id">-</strong> | Tier: <strong id="tier">-</strong></div>
+        <div class="metadata-line">Regions: <strong id="regions">-</strong> | Resources: <strong id="resource-count">-</strong></div>
+        <div class="metadata-line">Coverage: <span id="coverage">-</span></div>
+        <div class="metadata-line">Collected: <strong id="collected">-</strong> | Version: __AWSNAP_VERSION__</div>
+    </div>
+
+    <div class="status" id="status">Ready.</div>
+
+    <div class="editor-section">
+        <label for="sql-editor">SQL Query:</label>
+        <textarea id="sql-editor">SELECT service, count(*) AS n FROM resources GROUP BY 1 ORDER BY 2 DESC</textarea>
+    </div>
+
+    <div class="button-group">
+        <button id="run-btn">Run (Ctrl+Enter)</button>
+        <button data-sql="SELECT service, count(*) AS n FROM resources GROUP BY 1 ORDER BY 2 DESC">By Service</button>
+        <button data-sql="SELECT arn, service, region, name FROM resources WHERE tags = '{}' ORDER BY arn LIMIT 1000">Untagged</button>
+        <button data-sql="SELECT region, count(*) AS n FROM resources GROUP BY 1 ORDER BY 2 DESC">By Region</button>
+        <button data-sql="SELECT arn, name, region FROM resources WHERE resource_type LIKE '%SecurityGroup%' AND raw LIKE '%0.0.0.0/0%' ORDER BY arn">Open SGs</button>
+        <button data-sql="SELECT arn, name, regexp_extract(raw, '&quot;(?:Creat|Launch)[A-Za-z]*(?:Date|Time)&quot;:&quot;([^&quot;]+)&quot;', 1) AS created FROM resources WHERE created &lt;&gt; '' ORDER BY created DESC LIMIT 100">Newest</button>
+        <button data-sql="SELECT source, count(*) AS n FROM resources GROUP BY 1 ORDER BY 2 DESC">Source Coverage</button>
+        <button data-sql="SELECT * FROM metadata">Metadata</button>
+    </div>
+
+    <div class="results">
+        <div class="results-info" id="results-info"></div>
+        <div id="results-container"></div>
+    </div>
+
+    <script type="module">
+        import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+
+        let db;
+        let metadataRow;
+
+        async function initDatabase() {
+            try {
+                updateStatus("Initializing DuckDB...");
+
+                // AIDEV-NOTE: duckdb-wasm autoloads parquet extension from CDN on first query
+                const bundles = await duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(bundles);
+                const workerScript = bundle.mainWorker;
+                const logger = new duckdb.VoidLogger();
+
+                const workerURL = URL.createObjectURL(
+                    new Blob([`importScripts("${workerScript}");`], { type: "application/javascript" })
+                );
+                const worker = new Worker(workerURL);
+                db = new duckdb.AsyncDuckDB(logger, worker);
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(workerURL);
+
+                // Decode and register parquets
+                const resourcesBuf = Uint8Array.from(atob("__AWSNAP_RESOURCES_B64__"), c => c.charCodeAt(0));
+                const metadataBuf = Uint8Array.from(atob("__AWSNAP_METADATA_B64__"), c => c.charCodeAt(0));
+
+                await db.registerFileBuffer("resources.parquet", resourcesBuf);
+                await db.registerFileBuffer("metadata.parquet", metadataBuf);
+
+                // Create tables
+                const conn = await db.connect();
+                await conn.query("CREATE TABLE resources AS SELECT * FROM 'resources.parquet'");
+                await conn.query("CREATE TABLE metadata AS SELECT * FROM 'metadata.parquet'");
+                metadataRow = await conn.query("SELECT * FROM metadata");
+                await conn.close();
+
+                // Populate metadata display
+                const metaData = metadataRow.toArray()[0];
+                document.getElementById("account").textContent = metaData.account_id || "-";
+                document.getElementById("run-id").textContent = metaData.run_id || "-";
+                document.getElementById("tier").textContent = metaData.tier_used || "-";
+                document.getElementById("regions").textContent = (metaData.regions || "").split(",").join(", ");
+                document.getElementById("resource-count").textContent = metaData.resource_count || 0;
+                document.getElementById("coverage").textContent = metaData.coverage_note || "-";
+                document.getElementById("collected").textContent = formatValue("collected_at", metaData.collected_at);
+
+                updateStatus("Database ready. Enter SQL query and click Run.");
+                document.getElementById("sql-editor").focus();
+            } catch (error) {
+                updateStatus("Error: " + error.message, true);
+            }
+        }
+
+        function updateStatus(message, isError = false) {
+            const elem = document.getElementById("status");
+            elem.textContent = message;
+            elem.classList.toggle("error", isError);
+        }
+
+        function setQuery(query) {
+            document.getElementById("sql-editor").value = query;
+            runQuery();
+        }
+
+        async function runQuery() {
+            if (!db) {
+                updateStatus("Database not initialized", true);
+                return;
+            }
+
+            const query = document.getElementById("sql-editor").value.trim();
+            if (!query) {
+                updateStatus("Query is empty", true);
+                return;
+            }
+
+            try {
+                updateStatus("Running query...");
+                const conn = await db.connect();
+                const result = await conn.query(query);
+                await conn.close();
+
+                const rows = result.toArray();
+                const columns = result.schema.fields.map(f => f.name);
+
+                // Cap at 2000 rows
+                const displayRows = rows.slice(0, 2000);
+                const isCapped = rows.length > 2000;
+
+                renderTable(columns, displayRows);
+                updateStatus(
+                    `${displayRows.length} rows${isCapped ? " (capped at 2000)" : ""}. Total: ${rows.length}.`
+                );
+            } catch (error) {
+                updateStatus("Error: " + error.message, true);
+                document.getElementById("results-container").innerHTML = "";
+            }
+        }
+
+        function renderTable(columns, rows) {
+            const container = document.getElementById("results-container");
+
+            if (rows.length === 0) {
+                container.innerHTML = "<p>No results.</p>";
+                return;
+            }
+
+            let html = "<table><thead><tr>";
+            for (const col of columns) {
+                html += `<th>${escapeHtml(col)}</th>`;
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const row of rows) {
+                html += "<tr>";
+                for (const col of columns) {
+                    const value = row[col];
+                    const displayValue = formatValue(col, value);
+                    html += `<td>${escapeHtml(displayValue)}</td>`;
+                }
+                html += "</tr>";
+            }
+
+            html += "</tbody></table>";
+            container.innerHTML = html;
+        }
+
+        // AIDEV-NOTE: Arrow returns TIMESTAMP columns as epoch millis; render ISO for humans
+        function formatValue(col, value) {
+            if (value === null || value === undefined) return "(null)";
+            if (col === "collected_at" && typeof value !== "string") {
+                return new Date(Number(value)).toISOString();
+            }
+            return String(value);
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#039;",
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        document.getElementById("run-btn").addEventListener("click", runQuery);
+        for (const btn of document.querySelectorAll("button[data-sql]")) {
+            btn.addEventListener("click", () => setQuery(btn.dataset.sql));
+        }
+
+        // Keyboard shortcut: Ctrl/Cmd+Enter to run query
+        document.getElementById("sql-editor").addEventListener("keydown", event => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                event.preventDefault();
+                runQuery();
+            }
+        });
+
+        // Initialize on page load
+        initDatabase();
+    </script>
+</body>
+</html>
