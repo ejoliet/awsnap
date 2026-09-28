@@ -1,25 +1,24 @@
 .PHONY: venv lint fmt test test-browser smoke build clean
 
 venv:
-	uv venv
-	uv pip install -e ".[dev]"
+	uv sync --extra dev
 
 lint:
-	.venv/bin/ruff check src tests
+	uv run ruff check src tests
 
 fmt:
-	.venv/bin/ruff format src tests
+	uv run ruff format src tests
 
 test:
-	.venv/bin/pytest --cov=awsnap --cov-report=term-missing --cov-fail-under=80 -m "not browser" tests/
+	uv run pytest --cov=awsnap --cov-report=term-missing --cov-fail-under=80 -m "not browser" tests/
 
 test-browser:
-	.venv/bin/playwright install chromium
-	.venv/bin/pytest -m browser tests/
+	uv run playwright install chromium
+	uv run pytest -m browser tests/
 
 smoke:
 	@echo "Running smoke test (requires real AWS credentials)..."
-	time .venv/bin/awsnap --verbose --out ./smoke-out
+	time uv run awsnap --verbose --out ./smoke-out
 
 build:
 	uv build

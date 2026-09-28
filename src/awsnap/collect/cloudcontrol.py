@@ -33,7 +33,7 @@ def collect_cloudcontrol(
 
     if client is None:
         config = Config(retries={"mode": "adaptive", "max_attempts": 5})
-        # AIDEV-READONLY: cloudcontrol:ListResources
+        # AIDEV-READONLY: cloudformation:ListResources (+ each type's handler read perms)
         client = session.client("cloudcontrol", region_name=region, config=config)
 
     all_resources: list[Resource] = []

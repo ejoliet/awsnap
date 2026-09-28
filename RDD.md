@@ -104,7 +104,7 @@ awsnap/
 | IAM | `ViewOnlyAccess` or equivalent | CloudShell inherits console permissions — state loudly in user docs |
 | Storage | < 1 GB home quota | CloudShell persistent storage limit |
 
-**API allowlist (print at startup, part of trust story)**: `sts:GetCallerIdentity`, `config:SelectResourceConfig`, `config:DescribeConfigurationRecorderStatus`, `cloudcontrol:ListResources`, `tag:GetResources`, `ec2:DescribeRegions`. Optional: `s3:PutObject` on user-supplied bucket only when `--s3-bucket` given.
+**API allowlist (print at startup, part of trust story)**: `sts:GetCallerIdentity`, `config:SelectResourceConfig`, `config:DescribeConfigurationRecorderStatus`, `cloudformation:ListResources` (Cloud Control API is authorized under the `cloudformation:` prefix, and each type also needs its handler's read permissions), `tag:GetResources`, `ec2:DescribeRegions`. Optional: `s3:PutObject` on user-supplied bucket only when `--s3-bucket` given.
 
 ---
 

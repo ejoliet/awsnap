@@ -250,6 +250,43 @@ def test_run_verbose_mode(tmp_path, capsys, sample_resources, sample_coverage):
         assert result.exists()
 
 
+def test_run_all_collectors_denied(tmp_path, capsys):
+    """Zero resources plus failed collectors must fail loudly, not exit clean."""
+    from awsnap.cli import EmptySnapshotError, main
+    from awsnap.collect import CollectOutput
+
+    args = build_parser().parse_args(["--out", str(tmp_path)])
+    denied = [
+        Coverage(
+            tier="cloudcontrol",
+            collector="AWS::EC2::VPC",
+            region="us-east-1",
+            ok=False,
+            count=0,
+            seconds=0.1,
+            note="AccessDeniedException",
+        )
+    ]
+    mock_output = CollectOutput(resources=[], coverage=denied, tier_used="cloudcontrol")
+
+    with patch("awsnap.cli._sts_account_id") as mock_sts, \
+         patch("awsnap.cli.resolve_regions") as mock_resolve, \
+         patch("awsnap.cli.collect") as mock_collect:
+
+        mock_sts.return_value = "123456789012"
+        mock_resolve.return_value = ["us-east-1"]
+        mock_collect.return_value = mock_output
+
+        with pytest.raises(EmptySnapshotError):
+            run(args, session=MagicMock())
+
+        err = capsys.readouterr().err
+        assert "AccessDeniedException x1" in err
+        assert "cloudformation:ListResources" in err
+
+        assert main(["--out", str(tmp_path)]) == 1
+
+
 def test_print_allowlist():
     """Test print_allowlist with and without s3_bucket."""
     from io import StringIO

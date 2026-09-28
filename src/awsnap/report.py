@@ -11,9 +11,19 @@ API_ALLOWLIST: tuple[str, ...] = (
     "sts:GetCallerIdentity",
     "config:DescribeConfigurationRecorderStatus",
     "config:SelectResourceConfig",
-    "cloudcontrol:ListResources",
+    # Cloud Control API is authorized under the cloudformation: prefix, not cloudcontrol:
+    "cloudformation:ListResources",
     "tag:GetResources",
     "ec2:DescribeRegions",
+)
+
+# Cloud Control API calls the underlying service on your behalf, so each resource
+# type also needs that service's read permissions (ec2:DescribeVpcs, s3:ListBucket...).
+ALLOWLIST_NOTE = (
+    "Note: cloudformation:ListResources also requires the read permissions of each\n"
+    "resource type's handler (ec2:Describe*, s3:List*, ...). ViewOnlyAccess or\n"
+    "ReadOnlyAccess covers them; a policy with only the actions above returns\n"
+    "AccessDeniedException for every type."
 )
 
 
@@ -30,6 +40,8 @@ def print_allowlist(s3_bucket: str | None, out=sys.stdout) -> None:
 
     if s3_bucket:
         lines.append(f"  s3:PutObject (bucket {s3_bucket} only)")
+
+    lines.append(ALLOWLIST_NOTE)
 
     out.write("\n".join(lines) + "\n")
 

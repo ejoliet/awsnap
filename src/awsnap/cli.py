@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -14,10 +15,20 @@ from awsnap.collect import collect, resolve_regions
 from awsnap.emit.html import output_filename, render_html
 from awsnap.emit.parquet import write_metadata_parquet, write_resources_parquet
 from awsnap.model import RunMetadata, summarize_coverage
-from awsnap.report import print_allowlist, print_coverage, print_download_hint, upload_and_presign
+from awsnap.report import (
+    ALLOWLIST_NOTE,
+    print_allowlist,
+    print_coverage,
+    print_download_hint,
+    upload_and_presign,
+)
 
 # Size threshold for warning (200 MB)
 SIZE_WARN_BYTES = 200 * 1024 * 1024
+
+
+class EmptySnapshotError(RuntimeError):
+    """Every collector failed, so the snapshot has no resources."""
 
 
 def _sts_account_id(session: boto3.Session) -> str:
@@ -194,6 +205,20 @@ def run(args: argparse.Namespace, session: boto3.Session | None = None) -> Path:
 
     # Print download hint
     print_download_hint(output_path)
+
+    failures = [c for c in collect_output.coverage if not c.ok]
+    if metadata.resource_count == 0 and failures:
+        codes = Counter(c.note for c in failures)
+        sys.stderr.write(
+            "No resources collected; every collector failed: "
+            + ", ".join(f"{note} x{count}" for note, count in codes.most_common())
+            + "\n"
+            + ALLOWLIST_NOTE
+            + "\n"
+        )
+        if not args.verbose:
+            print_coverage(collect_output.coverage, out=sys.stderr)
+        raise EmptySnapshotError("snapshot contains no resources")
 
     return output_path
 
